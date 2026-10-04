@@ -2,16 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from photo_album_scanner.config import CameraConfig, Settings
-
-
-@pytest.fixture()
-def data_dir(tmp_path, monkeypatch):
-    target = tmp_path / "data"
-    monkeypatch.setenv("PAS_DATA_DIR", str(target))
-    return target
 
 
 def test_settings_round_trip(data_dir):

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Photo Album Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Photo Album Scanner</h1>
+  <div class="capture-bar">
+    <label>Album <input id="capture-album" value="album_01" size="12"></label>
+    <button id="capture-start">Start capture</button>
+    <button id="capture-manual" disabled>Capture now</button>
+    <button id="capture-stop" disabled>Stop</button>
+    <span id="capture-status" class="status">stopped</span>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <h2>Albums</h2>
+    <ul id="albums" class="list"></ul>
+    <h2>Pages</h2>
+    <ul id="pages" class="list pages"></ul>
+  </aside>
+
+  <section id="content">
+    <div id="live-panel" hidden>
+      <h2>Live view</h2>
+      <img id="preview" alt="live preview">
+    </div>
+
+    <div id="editor" hidden>
+      <h2 id="page-title"></h2>
+      <div class="toolbar">
+        <button id="btn-add">Add box</button>
+        <button id="btn-save">Save &amp; reprocess</button>
+        <button id="btn-redetect">Re-detect</button>
+        <button id="btn-delete" class="danger">Delete page</button>
+        <label class="toggle"><input type="checkbox" id="variant-raw"> show raw</label>
+        <span id="hint" class="muted"></span>
+      </div>
+      <div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+      <h3>Photos</h3>
+      <div id="photos" class="photos"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

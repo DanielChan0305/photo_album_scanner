@@ -10,13 +10,6 @@ import pytest
 from photo_album_scanner import capture
 
 
-@pytest.fixture()
-def data_dir(tmp_path, monkeypatch):
-    target = tmp_path / "data"
-    monkeypatch.setenv("PAS_DATA_DIR", str(target))
-    return target
-
-
 def test_album_dir_and_sequence(data_dir):
     album = capture.ensure_album_dir("album_01")
     assert album == data_dir / "albums" / "album_01"

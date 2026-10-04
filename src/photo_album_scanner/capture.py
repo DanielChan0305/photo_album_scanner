@@ -5,6 +5,9 @@ differ, the page is being turned or handled; once the frame has been stable for
 a short period, the full-resolution frame is captured exactly once. After a
 capture the session stays in COOLDOWN until motion resumes, so a static page
 never produces duplicates.
+
+``CaptureEngine`` is the shared loop used by both the CLI (``pas capture``) and
+the web UI's background capture service.
 """
 
 from __future__ import annotations
@@ -24,10 +27,11 @@ from typing import Any, Self
 import cv2
 import numpy as np
 
-from . import camera
-from .config import data_dir
+from . import camera, store
+from .config import Settings
+from .pipeline import process_page
 
-ALBUM_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PAGE_DIR_RE = re.compile(r"^page_(\d+)$")
 
 
 # --------------------------------------------------------------------------
@@ -37,11 +41,7 @@ ALBUM_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def ensure_album_dir(album: str) -> Path:
     """Create (if needed) and return the data directory for an album."""
-    if not ALBUM_NAME_RE.match(album):
-        raise ValueError(
-            f"invalid album name {album!r}: use letters, digits, '.', '_' or '-'"
-        )
-    path = data_dir() / "albums" / album
+    path = store.album_dir(album)  # validates the name
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -246,7 +246,7 @@ class Keyboard:
 
 
 # --------------------------------------------------------------------------
-# Capture loop
+# Capture engine
 # --------------------------------------------------------------------------
 
 
@@ -264,52 +264,106 @@ class CaptureConfig:
     warmup_frames: int = 10
 
 
-def run_capture(config: CaptureConfig, quiet: bool = False) -> int:
-    """Run the capture loop until 'q'/Ctrl+C/``max_captures``; returns capture count."""
-    detector = MotionDetector(config.motion)
-    previous_usr1 = signal.signal(signal.SIGUSR1, lambda *_: detector.request_capture())
-    captures = 0
+class CaptureEngine:
+    """Single-threaded capture loop shared by the CLI and the web service."""
 
-    try:
-        capture = camera.open_capture(
-            config.device, config.width, config.height, config.fps, config.fourcc
+    def __init__(self, config: CaptureConfig) -> None:
+        self.config = config
+        self.detector = MotionDetector(config.motion)
+        self.captures = 0
+        self._capture: cv2.VideoCapture | None = None
+        self._failures = 0
+
+    def open(self) -> None:
+        self._capture = camera.open_capture(
+            self.config.device,
+            self.config.width,
+            self.config.height,
+            self.config.fps,
+            self.config.fourcc,
         )
-    except RuntimeError as exc:
+        for _ in range(max(0, self.config.warmup_frames)):
+            self._capture.read()
+
+    def close(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+
+    def request_capture(self) -> None:
+        self.detector.request_capture()
+
+    @property
+    def state(self) -> State:
+        return self.detector.state
+
+    def read(self) -> np.ndarray:
+        """Read a frame, retrying briefly; raises after persistent failure."""
+        if self._capture is None:
+            raise RuntimeError("capture engine is not open")
+        while True:
+            ok, frame = self._capture.read()
+            if ok:
+                self._failures = 0
+                return frame
+            self._failures += 1
+            if self._failures > 30:
+                raise RuntimeError("camera stopped delivering frames")
+            time.sleep(0.1)
+
+    def step(self, frame: np.ndarray, now: float) -> tuple[MotionEvent, CaptureRecord | None]:
+        event = self.detector.update(frame, now)
+        record = None
+        if event.capture:
+            seq = next_page_seq(self.config.album_dir)
+            record = save_capture(self.config.album_dir, frame, seq)
+            self.captures += 1
+        return event, record
+
+
+def _process_captured_page(record: CaptureRecord, quiet: bool) -> None:
+    try:
+        result = process_page(Path(record.raw_path).parent, Settings.load())
+        if not quiet:
+            print(f"  processed page_{record.seq:03d}: {len(result.photos)} photo(s)")
+    except Exception as exc:  # noqa: BLE001 - pipeline failures must not stop capture
+        print(f"  processing page_{record.seq:03d} failed: {exc}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------
+# CLI capture loop
+# --------------------------------------------------------------------------
+
+
+def run_capture(config: CaptureConfig, quiet: bool = False, process: bool = False) -> int:
+    """Run the capture loop until 'q'/Ctrl+C/``max_captures``; returns capture count."""
+    engine = CaptureEngine(config)
+    previous_usr1 = signal.signal(signal.SIGUSR1, lambda *_: engine.request_capture())
+    try:
+        engine.open()
+    except RuntimeError:
         signal.signal(signal.SIGUSR1, previous_usr1)
-        raise RuntimeError(str(exc)) from exc
+        raise
 
     interval = 1.0 / config.analysis_fps if config.analysis_fps > 0 else 0.0
-    failures = 0
     last_glare_note = 0.0
 
     try:
-        for _ in range(max(0, config.warmup_frames)):
-            capture.read()
-
         with Keyboard() as keyboard:
             while True:
-                ok, frame = capture.read()
-                if not ok:
-                    failures += 1
-                    if failures > 30:
-                        raise RuntimeError("camera stopped delivering frames")
-                    time.sleep(0.1)
-                    continue
-                failures = 0
-
+                frame = engine.read()
                 now = time.monotonic()
-                event = detector.update(frame, now)
+                event, record = engine.step(frame, now)
 
-                if event.capture:
-                    seq = next_page_seq(config.album_dir)
-                    record = save_capture(config.album_dir, frame, seq)
-                    captures += 1
+                if record is not None:
                     if not quiet:
                         print(
-                            f"captured page_{seq:03d} "
+                            f"captured page_{record.seq:03d} "
                             f"(brightness {record.brightness:.1f}) -> {record.raw_path}"
                         )
-                    if config.max_captures is not None and captures >= config.max_captures:
+                    if process:
+                        _process_captured_page(record, quiet)
+                    if config.max_captures is not None and engine.captures >= config.max_captures:
                         break
                 elif event.transition and not quiet:
                     if event.state == State.MOTION:
@@ -324,7 +378,7 @@ def run_capture(config: CaptureConfig, quiet: bool = False) -> int:
                 if key in ("q", "\x03", "\x1b"):  # q, Ctrl+C, Esc
                     break
                 if key == "c":
-                    detector.request_capture()
+                    engine.request_capture()
 
                 elapsed = time.monotonic() - now
                 if interval and elapsed < interval:
@@ -332,7 +386,7 @@ def run_capture(config: CaptureConfig, quiet: bool = False) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        capture.release()
+        engine.close()
         signal.signal(signal.SIGUSR1, previous_usr1)
 
-    return captures
+    return engine.captures

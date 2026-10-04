@@ -5,7 +5,7 @@ A human flips the pages; the app auto-captures each page as it settles, detects 
 individual photos, corrects perspective and glare, applies light post-processing, and
 saves clean per-photo crops — with a local web UI for reviewing and fixing results.
 
-**Status:** M0 in progress — camera inspection and calibration tooling implemented
+**Status:** M0–M3 implemented — capture, photo detection/cropping, and a web review UI
 (see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full design).
 
 ## At a glance
@@ -39,6 +39,25 @@ While `pas capture` runs, press `c` for a manual capture and `q` to quit (when r
 non-interactively, `kill -USR1 <pid>` does the same). Each settled page is saved once to
 `data/albums/<album>/page_###/raw.jpg` (+ `thumb.jpg`), with a manifest in
 `data/albums/<album>/captures.jsonl`. Use `--max-captures N` for a quick test run.
+
+Then process and review:
+
+```bash
+pas process            # run photo detection over all captured pages
+pas serve              # web UI at http://127.0.0.1:8000
+```
+
+### Web review UI
+
+- **Live capture:** Start/Stop and "Capture now" in the header, with a live preview while
+  you flip pages. Each captured page is processed automatically and appears in the list.
+- **Page browser:** albums and pages with thumbnails, photo counts, QC flags, and errors.
+- **Box editor:** drag, resize, add, or delete photo boxes directly on the page image
+  ("Add box" then drag; Delete removes the selected box). **Save & reprocess** regenerates
+  crops using your boxes; **Re-detect** discards edits and runs detection again.
+- **Output:** `rectified.jpg` (top-down page), `overlay.jpg` (detections drawn),
+  `photo_XX.jpg` crops, `meta.json`, and `boxes_edited.json` for corrections. All local,
+  in `data/`.
 
 ## Repository layout
 

@@ -10,8 +10,9 @@ from pathlib import Path
 
 import cv2
 
-from . import __version__, camera, capture
+from . import __version__, camera, capture, store
 from .config import Settings, calibration_dir
+from .pipeline import process_page
 
 EXPOSURE_NAMES = ("exposure_absolute", "exposure_time_absolute")
 FOCUS_NAMES = ("focus_absolute",)
@@ -74,8 +75,20 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_cmd.add_argument("--analysis-fps", type=float, default=10.0)
     capture_cmd.add_argument("--max-captures", type=int, default=None, help="stop after N captures (for testing)")
     capture_cmd.add_argument("--no-controls", action="store_true", help="do not re-apply locked camera controls")
+    capture_cmd.add_argument("--process", action="store_true", help="run the detection pipeline after each capture")
     capture_cmd.add_argument("--quiet", action="store_true")
     capture_cmd.set_defaults(func=_cmd_capture)
+
+    process_cmd = sub.add_parser("process", help="run the detection pipeline on captured pages")
+    process_cmd.add_argument("--album", default=None, help="album to process (default: all albums)")
+    process_cmd.add_argument("--force", action="store_true", help="reprocess already-processed pages")
+    process_cmd.add_argument("--redetect", action="store_true", help="discard box edits and re-detect")
+    process_cmd.set_defaults(func=_cmd_process)
+
+    serve_cmd = sub.add_parser("serve", help="web review UI with live capture")
+    serve_cmd.add_argument("--host", default="127.0.0.1")
+    serve_cmd.add_argument("--port", type=int, default=8000)
+    serve_cmd.set_defaults(func=_cmd_serve)
 
     return parser
 
@@ -260,13 +273,64 @@ def _cmd_capture(args: argparse.Namespace) -> int:
             print(f"manual capture: kill -USR1 {os.getpid()}")
 
     try:
-        count = capture.run_capture(config, quiet=args.quiet)
+        count = capture.run_capture(config, quiet=args.quiet, process=args.process)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     if not args.quiet:
         print(f"done: {count} page(s) captured into {album_dir}")
+    return 0
+
+
+def _cmd_process(args: argparse.Namespace) -> int:
+    settings = Settings.load()
+    albums = [args.album] if args.album else store.list_albums()
+    if not albums:
+        print("no albums found")
+        return 1
+
+    processed = 0
+    failures = 0
+    for album in albums:
+        try:
+            seqs = store.list_pages(album)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            failures += 1
+            continue
+        for seq in seqs:
+            directory = store.page_dir(album, seq)
+            has_edits = (directory / "boxes_edited.json").is_file()
+            already = store.read_meta(directory) is not None
+            if already and not args.force and not args.redetect and not has_edits:
+                continue
+            try:
+                result = process_page(directory, settings, redetect=args.redetect)
+            except Exception as exc:  # noqa: BLE001 - report per-page failures
+                failures += 1
+                print(f"{album} page_{seq:03d}: FAILED: {exc}", file=sys.stderr)
+                continue
+            processed += 1
+            tags = []
+            if result.edited:
+                tags.append("edited")
+            if result.glare_blocked:
+                tags.append("glare")
+            suffix = f" [{' '.join(tags)}]" if tags else ""
+            print(f"{album} page_{seq:03d}: {len(result.photos)} photo(s){suffix}")
+
+    print(f"processed {processed} page(s), {failures} failure(s)")
+    return 0 if failures == 0 else 1
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .web.app import create_app
+
+    print(f"serving on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="warning")
     return 0
 
 

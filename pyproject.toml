@@ -13,17 +13,16 @@ dependencies = [
     "opencv-python",
     "pillow",
     "linuxpy>=0.25",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2",
 ]
 
 [project.optional-dependencies]
-web = [
-    "fastapi",
-    "uvicorn",
-    "pydantic",
-]
 dev = [
     "pytest",
     "ruff",
+    "httpx",
 ]
 
 [project.scripts]
