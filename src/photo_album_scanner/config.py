@@ -31,6 +31,30 @@ def settings_path() -> Path:
 
 
 @dataclass
+class DetectionConfig:
+    """Photo-detection sensitivity. Smaller thresholds = more sensitive.
+
+    Defaults are tuned for full-bleed prints in plastic sleeves, where photo
+    borders can be soft, fragmented by glare, or low-contrast.
+    """
+
+    min_area_ratio: float = 0.008  # fraction of the page
+    max_area_ratio: float = 0.30  # larger = probably several merged photos
+    min_side: int = 80  # full-resolution pixels
+    max_aspect: float = 3.0
+    min_rectangularity: float = 0.45  # contour area / fitted rotated-rect area
+    canny_pairs: tuple[tuple[int, int], ...] = ((25, 75), (40, 120))
+    clahe: bool = True
+    min_edge_component: int = 40  # drop speckle edges smaller than this
+    close_kernel: int = 5
+    dedupe_iou: float = 0.5
+    low_confidence: float = 0.5
+
+    def __post_init__(self) -> None:
+        self.canny_pairs = tuple((int(lo), int(hi)) for lo, hi in self.canny_pairs)
+
+
+@dataclass
 class CameraConfig:
     """Chosen capture device (path or stream URL) and locked camera controls."""
 
@@ -48,6 +72,7 @@ class Settings:
     """All persisted, calibration-derived settings."""
 
     camera: CameraConfig = field(default_factory=CameraConfig)
+    detection: DetectionConfig = field(default_factory=DetectionConfig)
     page_roi: list[list[int]] | None = None
     notes: str = ""
 
@@ -59,6 +84,7 @@ class Settings:
         raw: dict[str, Any] = json.loads(path.read_text())
         return cls(
             camera=CameraConfig(**raw.get("camera", {})),
+            detection=DetectionConfig(**raw.get("detection", {})),
             page_roi=raw.get("page_roi"),
             notes=raw.get("notes", ""),
         )

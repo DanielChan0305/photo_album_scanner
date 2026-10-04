@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import cv2
+import numpy as np
 
 from photo_album_scanner.pipeline import detect, glare
 
@@ -37,3 +38,17 @@ def test_glare_streak_does_not_confuse_detection(synthetic_page):
 
     detections = detect.detect_photos(image)
     assert len(detections) == 2
+
+
+def test_small_low_contrast_photo_is_detected():
+    page = np.full((900, 1200, 3), 45, dtype=np.uint8)
+    cv2.rectangle(page, (100, 100), (240, 190), (200, 200, 200), -1)
+    cv2.rectangle(page, (114, 114), (226, 176), (90, 120, 160), -1)
+
+    detections = detect.detect_photos(page)
+    assert len(detections) == 1
+    x1, y1, x2, y2 = _bbox(detections[0].quad)
+    assert abs(x1 - 100) <= 20
+    assert abs(y1 - 100) <= 20
+    assert abs(x2 - 240) <= 20
+    assert abs(y2 - 190) <= 20

@@ -91,6 +91,22 @@ need `sudo` and a kernel module; the stream-URL route avoids that.
   `photo_XX.jpg` crops, `meta.json`, and `boxes_edited.json` for corrections. All local,
   in `data/`.
 
+### Detection tuning
+
+Defaults are tuned for full-bleed prints in sleeves. Values persist to
+`data/settings.json` and are used by the web UI too:
+
+```bash
+pas process --album album_01 --force --min-area-ratio 0.005 --min-side 60 --min-rectangularity 0.4
+```
+
+- `--min-area-ratio` — smallest photo area as a fraction of the page (default 0.008)
+- `--min-side` — smallest photo side in full-resolution pixels (default 80)
+- `--min-rectangularity` — 0–1; lower is more permissive (default 0.45)
+
+Lower values find more photos at the cost of more false positives; detections the
+detector is unsure about are flagged `low_confidence` in the UI.
+
 ## Repository layout
 
 See §2 "Repository layout" in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).

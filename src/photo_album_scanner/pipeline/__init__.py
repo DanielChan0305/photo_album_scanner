@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from .. import store
-from ..config import Settings
+from ..config import DetectionConfig, Settings
 from . import detect, glare, rectify, warp
 
 PAGE_DIR_RE = re.compile(r"^page_(\d+)$")
@@ -61,7 +61,10 @@ def _encode(frame: np.ndarray, quality: int) -> bytes:
 
 
 def process_page(
-    page: Path, settings: Settings | None = None, redetect: bool = False
+    page: Path,
+    settings: Settings | None = None,
+    redetect: bool = False,
+    detection: DetectionConfig | None = None,
 ) -> PageResult:
     """Run the full pipeline for one captured page folder.
 
@@ -93,7 +96,7 @@ def process_page(
         ]
         edited = True
     else:
-        detections = detect.detect_photos(rectified)
+        detections = detect.detect_photos(rectified, config=detection or settings.detection)
         photos = [
             PhotoResult(index=i, quad=d.quad, confidence=d.confidence, flags=list(d.flags))
             for i, d in enumerate(detections, start=1)

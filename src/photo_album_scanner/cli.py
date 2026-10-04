@@ -7,6 +7,7 @@ import os
 import re
 import statistics
 import sys
+from dataclasses import replace
 
 import cv2
 
@@ -104,6 +105,9 @@ def _build_parser() -> argparse.ArgumentParser:
     process_cmd.add_argument("--album", default=None, help="album to process (default: all albums)")
     process_cmd.add_argument("--force", action="store_true", help="reprocess already-processed pages")
     process_cmd.add_argument("--redetect", action="store_true", help="discard box edits and re-detect")
+    process_cmd.add_argument("--min-area-ratio", type=float, default=None, help="smallest photo area as a fraction of the page (default 0.008)")
+    process_cmd.add_argument("--min-side", type=int, default=None, help="smallest photo side in full-res pixels (default 80)")
+    process_cmd.add_argument("--min-rectangularity", type=float, default=None, help="0-1; lower is more permissive (default 0.7)")
     process_cmd.set_defaults(func=_cmd_process)
 
     serve_cmd = sub.add_parser("serve", help="web review UI with live capture")
@@ -336,6 +340,18 @@ def _cmd_capture(args: argparse.Namespace) -> int:
 
 def _cmd_process(args: argparse.Namespace) -> int:
     settings = Settings.load()
+    overrides: dict[str, float | int] = {}
+    if args.min_area_ratio is not None:
+        overrides["min_area_ratio"] = args.min_area_ratio
+    if args.min_side is not None:
+        overrides["min_side"] = args.min_side
+    if args.min_rectangularity is not None:
+        overrides["min_rectangularity"] = args.min_rectangularity
+    if overrides:
+        settings.detection = replace(settings.detection, **overrides)
+        settings.save()
+        print(f"detection settings updated: {overrides}")
+
     albums = [args.album] if args.album else store.list_albums()
     if not albums:
         print("no albums found")
