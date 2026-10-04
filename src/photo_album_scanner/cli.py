@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import statistics
 import sys
 from pathlib import Path
 
 import cv2
 
-from . import __version__, camera
+from . import __version__, camera, capture
 from .config import Settings, calibration_dir
 
 EXPOSURE_NAMES = ("exposure_absolute", "exposure_time_absolute")
@@ -59,6 +60,22 @@ def _build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--wb", type=int, default=None, help="white balance temperature override")
     calibrate.add_argument("--no-lock", action="store_true", help="skip control locking; only capture test frames")
     calibrate.set_defaults(func=_cmd_calibrate)
+
+    capture_cmd = sub.add_parser("capture", help="auto-capture album pages as they settle")
+    capture_cmd.add_argument("--album", default="album_01", help="album name (default: album_01)")
+    capture_cmd.add_argument("--device", type=Path, default=None)
+    capture_cmd.add_argument("--format", dest="fourcc", default=None, help="pixel format, e.g. MJPG or YUYV")
+    capture_cmd.add_argument("--width", type=int, default=None)
+    capture_cmd.add_argument("--height", type=int, default=None)
+    capture_cmd.add_argument("--fps", type=int, default=None)
+    capture_cmd.add_argument("--stable", type=float, default=0.7, help="seconds of stillness before a capture")
+    capture_cmd.add_argument("--motion-ratio", type=float, default=0.005, help="changed-pixel fraction counted as motion")
+    capture_cmd.add_argument("--glare-ratio", type=float, default=0.25, help="near-white fraction that blocks a capture")
+    capture_cmd.add_argument("--analysis-fps", type=float, default=10.0)
+    capture_cmd.add_argument("--max-captures", type=int, default=None, help="stop after N captures (for testing)")
+    capture_cmd.add_argument("--no-controls", action="store_true", help="do not re-apply locked camera controls")
+    capture_cmd.add_argument("--quiet", action="store_true")
+    capture_cmd.set_defaults(func=_cmd_capture)
 
     return parser
 
@@ -190,6 +207,66 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     settings.camera.controls = locked
     saved_settings = settings.save()
     print(f"settings saved to {saved_settings}")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+
+def _cmd_capture(args: argparse.Namespace) -> int:
+    settings = Settings.load()
+    path = _resolve_device(args.device, settings)
+    try:
+        album_dir = capture.ensure_album_dir(args.album)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    fourcc = (args.fourcc or settings.camera.pixel_format or "MJPG").upper()
+    width = args.width or settings.camera.width or 1920
+    height = args.height or settings.camera.height or 1080
+    fps = args.fps or settings.camera.fps or 30
+
+    if settings.camera.controls and not args.no_controls:
+        results = camera.apply_controls(path, settings.camera.controls)
+        failed = [name for name, (ok, _message) in results.items() if not ok]
+        if failed and not args.quiet:
+            print(f"warning: could not re-apply controls: {', '.join(failed)}")
+
+    config = capture.CaptureConfig(
+        album_dir=album_dir,
+        device=str(path),
+        width=width,
+        height=height,
+        fps=fps,
+        fourcc=fourcc,
+        motion=capture.MotionConfig(
+            stable_seconds=args.stable,
+            motion_ratio=args.motion_ratio,
+            glare_ratio=args.glare_ratio,
+        ),
+        analysis_fps=args.analysis_fps,
+        max_captures=args.max_captures,
+    )
+
+    if not args.quiet:
+        print(f"album: {args.album} -> {album_dir}")
+        print(f"camera: {path} {fourcc} {width}x{height} @ {fps} fps")
+        if sys.stdin.isatty():
+            print("press 'c' to capture now, 'q' to quit")
+        else:
+            print(f"manual capture: kill -USR1 {os.getpid()}")
+
+    try:
+        count = capture.run_capture(config, quiet=args.quiet)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not args.quiet:
+        print(f"done: {count} page(s) captured into {album_dir}")
     return 0
 
 

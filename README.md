@@ -29,10 +29,16 @@ source .venv/bin/activate
 pas devices          # list /dev/video* devices
 pas inspect          # formats, frame rates, and controls of the selected camera
 pas calibrate        # lock auto exposure/focus/WB + save test frames to data/calibration/
+pas capture --album album_01   # auto-capture pages as they settle
 ```
 
 `pas calibrate` writes the chosen device, capture format, and locked control values to
 `data/settings.json`, which later milestones read at startup.
+
+While `pas capture` runs, press `c` for a manual capture and `q` to quit (when run
+non-interactively, `kill -USR1 <pid>` does the same). Each settled page is saved once to
+`data/albums/<album>/page_###/raw.jpg` (+ `thumb.jpg`), with a manifest in
+`data/albums/<album>/captures.jsonl`. Use `--max-captures N` for a quick test run.
 
 ## Repository layout
 
