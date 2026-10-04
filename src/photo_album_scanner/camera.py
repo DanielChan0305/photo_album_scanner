@@ -8,6 +8,7 @@ V4L2 backend, which decodes MJPG/YUYV streams to BGR frames.
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -342,6 +343,8 @@ def open_capture(
     """
     source = str(path)
     if is_network_source(source):
+        # Keep FFmpeg's benign MJPEG padding warnings out of the console.
+        os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "16")
         capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         if not capture.isOpened():
             raise RuntimeError(f"could not open stream {source}")

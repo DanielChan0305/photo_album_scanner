@@ -65,6 +65,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="full-resolution still URL (e.g. IP Webcam's http://PHONE:8080/photo.jpg)",
     )
+    calibrate.add_argument(
+        "--no-still",
+        action="store_true",
+        help="clear any saved still URL and capture from the video stream",
+    )
     calibrate.add_argument("--no-lock", action="store_true", help="skip control locking; only capture test frames")
     calibrate.set_defaults(func=_cmd_calibrate)
 
@@ -86,6 +91,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--still-url",
         default=None,
         help="full-resolution still URL (e.g. IP Webcam's http://PHONE:8080/photo.jpg)",
+    )
+    capture_cmd.add_argument(
+        "--no-still",
+        action="store_true",
+        help="ignore any saved still URL and capture from the video stream",
     )
     capture_cmd.add_argument("--quiet", action="store_true")
     capture_cmd.set_defaults(func=_cmd_capture)
@@ -237,7 +247,7 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
         print("warning: brightness varies noticeably — auto controls may still be active")
         print("         or lighting is unstable; consider re-running with --exposure/--wb values")
 
-    still_url = args.still_url or settings.camera.still_url
+    still_url = None if args.no_still else (args.still_url or settings.camera.still_url)
     if still_url:
         still = camera.fetch_still(still_url)
         if still is None:
@@ -285,7 +295,7 @@ def _cmd_capture(args: argparse.Namespace) -> int:
         if failed and not args.quiet:
             print(f"warning: could not re-apply controls: {', '.join(failed)}")
 
-    still_url = args.still_url or settings.camera.still_url
+    still_url = None if args.no_still else (args.still_url or settings.camera.still_url)
     config = capture.CaptureConfig(
         album_dir=album_dir,
         device=source,
