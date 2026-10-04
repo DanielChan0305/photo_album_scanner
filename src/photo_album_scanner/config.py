@@ -32,13 +32,14 @@ def settings_path() -> Path:
 
 @dataclass
 class CameraConfig:
-    """Chosen capture device and locked camera controls."""
+    """Chosen capture device (path or stream URL) and locked camera controls."""
 
     device: str | None = None
     width: int = 1920
     height: int = 1080
     fps: int = 30
     pixel_format: str | None = None
+    still_url: str | None = None
     controls: dict[str, Any] = field(default_factory=dict)
 
 

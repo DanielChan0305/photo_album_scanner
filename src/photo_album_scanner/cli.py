@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import statistics
 import sys
-from pathlib import Path
 
 import cv2
 
@@ -42,15 +42,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     inspect = sub.add_parser("inspect", help="show formats, frame rates, and controls of a camera")
     inspect.add_argument(
+        "--source",
         "--device",
-        type=Path,
+        dest="source",
         default=None,
-        help="device path (default: calibrated device, else autodetect)",
+        help="device path or stream URL (default: configured source, else autodetect)",
     )
     inspect.set_defaults(func=_cmd_inspect)
 
     calibrate = sub.add_parser("calibrate", help="lock camera controls and save test frames")
-    calibrate.add_argument("--device", type=Path, default=None)
+    calibrate.add_argument("--source", "--device", dest="source", default=None)
     calibrate.add_argument("--format", dest="fourcc", default=None, help="pixel format, e.g. MJPG or YUYV")
     calibrate.add_argument("--width", type=int, default=None)
     calibrate.add_argument("--height", type=int, default=None)
@@ -59,12 +60,17 @@ def _build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--exposure", type=int, default=None, help="manual exposure value override")
     calibrate.add_argument("--focus", type=int, default=None, help="manual focus value override")
     calibrate.add_argument("--wb", type=int, default=None, help="white balance temperature override")
+    calibrate.add_argument(
+        "--still-url",
+        default=None,
+        help="full-resolution still URL (e.g. IP Webcam's http://PHONE:8080/photo.jpg)",
+    )
     calibrate.add_argument("--no-lock", action="store_true", help="skip control locking; only capture test frames")
     calibrate.set_defaults(func=_cmd_calibrate)
 
     capture_cmd = sub.add_parser("capture", help="auto-capture album pages as they settle")
     capture_cmd.add_argument("--album", default="album_01", help="album name (default: album_01)")
-    capture_cmd.add_argument("--device", type=Path, default=None)
+    capture_cmd.add_argument("--source", "--device", dest="source", default=None)
     capture_cmd.add_argument("--format", dest="fourcc", default=None, help="pixel format, e.g. MJPG or YUYV")
     capture_cmd.add_argument("--width", type=int, default=None)
     capture_cmd.add_argument("--height", type=int, default=None)
@@ -76,6 +82,11 @@ def _build_parser() -> argparse.ArgumentParser:
     capture_cmd.add_argument("--max-captures", type=int, default=None, help="stop after N captures (for testing)")
     capture_cmd.add_argument("--no-controls", action="store_true", help="do not re-apply locked camera controls")
     capture_cmd.add_argument("--process", action="store_true", help="run the detection pipeline after each capture")
+    capture_cmd.add_argument(
+        "--still-url",
+        default=None,
+        help="full-resolution still URL (e.g. IP Webcam's http://PHONE:8080/photo.jpg)",
+    )
     capture_cmd.add_argument("--quiet", action="store_true")
     capture_cmd.set_defaults(func=_cmd_capture)
 
@@ -98,15 +109,19 @@ def _build_parser() -> argparse.ArgumentParser:
 # --------------------------------------------------------------------------
 
 
-def _resolve_device(explicit: Path | None, settings: Settings) -> Path:
-    if explicit is not None:
+def _resolve_source(explicit: str | None, settings: Settings) -> str:
+    if explicit:
         return explicit
     if settings.camera.device:
-        return Path(settings.camera.device)
+        return settings.camera.device
     detected = camera.autodetect_device()
     if detected is None:
-        raise SystemExit("no video devices found under /dev/video*")
-    return detected
+        raise SystemExit("no camera found: pass --source or run `pas calibrate` first")
+    return str(detected)
+
+
+def _sanitize_source(source: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", source).strip("_")[:60] or "source"
 
 
 def _cmd_devices(_args: argparse.Namespace) -> int:
@@ -122,8 +137,12 @@ def _cmd_devices(_args: argparse.Namespace) -> int:
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
     settings = Settings.load()
-    path = _resolve_device(args.device, settings)
-    details = camera.inspect_device(path)
+    source = _resolve_source(args.source, settings)
+    if camera.is_network_source(source):
+        print(f"{source} is a network stream — V4L2 formats/controls are not available.")
+        print(f"Test image quality with: pas calibrate --source {source} --frames 5")
+        return 1
+    details = camera.inspect_device(source)
     print(f"{details.path} — {details.name}")
     print(f"driver: {details.driver}  bus: {details.bus_info}")
     print("formats:")
@@ -145,42 +164,48 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 def _cmd_calibrate(args: argparse.Namespace) -> int:
     settings = Settings.load()
-    path = _resolve_device(args.device, settings)
-    details = camera.inspect_device(path)
-    print(f"camera: {path} — {details.name}")
+    source = _resolve_source(args.source, settings)
+    network = camera.is_network_source(source)
 
     fourcc = (args.fourcc or settings.camera.pixel_format or "MJPG").upper()
     width = args.width or settings.camera.width or 1920
     height = args.height or settings.camera.height or 1080
     fps = args.fps or settings.camera.fps or 30
 
-    _warn_if_unsupported(details, fourcc, width, height)
-
     locked: dict[str, int] = {}
-    if not args.no_lock:
-        print("locking auto controls:")
-        locked, log = camera.auto_lock_controls(path)
-        for line in log:
-            print(f"  {line}")
+    if network:
+        print(f"source: {source} (network stream)")
+        if not args.no_lock:
+            print("  note: network streams have no V4L2 controls; set exposure/focus in the phone app")
+    else:
+        details = camera.inspect_device(source)
+        print(f"camera: {source} — {details.name}")
+        _warn_if_unsupported(details, fourcc, width, height)
 
-        overrides: dict[str, int] = {}
-        if args.exposure is not None:
-            _add_override(overrides, details, EXPOSURE_NAMES, args.exposure, "exposure")
-        if args.focus is not None:
-            _add_override(overrides, details, FOCUS_NAMES, args.focus, "focus")
-        if args.wb is not None:
-            _add_override(overrides, details, WB_NAMES, args.wb, "white balance")
-        if overrides:
-            print("applying overrides:")
-            for name, (ok, message) in camera.apply_controls(path, overrides).items():
-                print(f"  {'set' if ok else 'failed'}: {name}: {message}")
-            locked.update(camera.read_key_controls(path))
-        if locked:
-            summary = ", ".join(f"{name}={value}" for name, value in sorted(locked.items()))
-            print(f"locked controls: {summary}")
+        if not args.no_lock:
+            print("locking auto controls:")
+            locked, log = camera.auto_lock_controls(source)
+            for line in log:
+                print(f"  {line}")
 
-    print(f"capturing {args.frames} test frames at {fourcc} {width}x{height} @ {fps} fps")
-    capture = camera.open_capture(path, width, height, fps, fourcc)
+            overrides: dict[str, int] = {}
+            if args.exposure is not None:
+                _add_override(overrides, details, EXPOSURE_NAMES, args.exposure, "exposure")
+            if args.focus is not None:
+                _add_override(overrides, details, FOCUS_NAMES, args.focus, "focus")
+            if args.wb is not None:
+                _add_override(overrides, details, WB_NAMES, args.wb, "white balance")
+            if overrides:
+                print("applying overrides:")
+                for name, (ok, message) in camera.apply_controls(source, overrides).items():
+                    print(f"  {'set' if ok else 'failed'}: {name}: {message}")
+                locked.update(camera.read_key_controls(source))
+            if locked:
+                summary = ", ".join(f"{name}={value}" for name, value in sorted(locked.items()))
+                print(f"locked controls: {summary}")
+
+    print(f"capturing {args.frames} test frames from {source}")
+    capture = camera.open_capture(source, width, height, fps, fourcc)
     try:
         actual = _actual_capture_config(capture)
         print(
@@ -197,7 +222,7 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
 
     out_dir = calibration_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{path.name}_{actual['width']}x{actual['height']}_{actual['fourcc']}"
+    stem = f"{_sanitize_source(source)}_{actual['width']}x{actual['height']}_{actual['fourcc']}"
     for index, frame in enumerate(frames, start=1):
         cv2.imwrite(str(out_dir / f"{stem}_{index:02d}.jpg"), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
     print(f"saved {len(frames)} frames to {out_dir}")
@@ -212,11 +237,22 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
         print("warning: brightness varies noticeably — auto controls may still be active")
         print("         or lighting is unstable; consider re-running with --exposure/--wb values")
 
-    settings.camera.device = str(path)
-    settings.camera.pixel_format = actual["fourcc"]
-    settings.camera.width = actual["width"]
-    settings.camera.height = actual["height"]
-    settings.camera.fps = round(actual["fps"])
+    still_url = args.still_url or settings.camera.still_url
+    if still_url:
+        still = camera.fetch_still(still_url)
+        if still is None:
+            print(f"warning: could not fetch a still from {still_url}")
+        else:
+            still_path = out_dir / f"{_sanitize_source(source)}_still.jpg"
+            cv2.imwrite(str(still_path), still, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            print(f"still: {still.shape[1]}x{still.shape[0]} from {still_url} -> {still_path}")
+
+    settings.camera.device = source
+    settings.camera.pixel_format = str(actual["fourcc"])
+    settings.camera.width = int(actual["width"])
+    settings.camera.height = int(actual["height"])
+    settings.camera.fps = round(float(actual["fps"]))
+    settings.camera.still_url = still_url
     settings.camera.controls = locked
     saved_settings = settings.save()
     print(f"settings saved to {saved_settings}")
@@ -230,7 +266,8 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
 
 def _cmd_capture(args: argparse.Namespace) -> int:
     settings = Settings.load()
-    path = _resolve_device(args.device, settings)
+    source = _resolve_source(args.source, settings)
+    network = camera.is_network_source(source)
     try:
         album_dir = capture.ensure_album_dir(args.album)
     except ValueError as exc:
@@ -242,19 +279,21 @@ def _cmd_capture(args: argparse.Namespace) -> int:
     height = args.height or settings.camera.height or 1080
     fps = args.fps or settings.camera.fps or 30
 
-    if settings.camera.controls and not args.no_controls:
-        results = camera.apply_controls(path, settings.camera.controls)
+    if settings.camera.controls and not args.no_controls and not network:
+        results = camera.apply_controls(source, settings.camera.controls)
         failed = [name for name, (ok, _message) in results.items() if not ok]
         if failed and not args.quiet:
             print(f"warning: could not re-apply controls: {', '.join(failed)}")
 
+    still_url = args.still_url or settings.camera.still_url
     config = capture.CaptureConfig(
         album_dir=album_dir,
-        device=str(path),
+        device=source,
         width=width,
         height=height,
         fps=fps,
         fourcc=fourcc,
+        still_url=still_url,
         motion=capture.MotionConfig(
             stable_seconds=args.stable,
             motion_ratio=args.motion_ratio,
@@ -266,7 +305,9 @@ def _cmd_capture(args: argparse.Namespace) -> int:
 
     if not args.quiet:
         print(f"album: {args.album} -> {album_dir}")
-        print(f"camera: {path} {fourcc} {width}x{height} @ {fps} fps")
+        print(f"source: {source} {fourcc} {width}x{height} @ {fps} fps")
+        if still_url:
+            print(f"stills: {still_url}")
         if sys.stdin.isatty():
             print("press 'c' to capture now, 'q' to quit")
         else:

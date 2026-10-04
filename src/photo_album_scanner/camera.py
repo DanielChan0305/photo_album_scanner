@@ -316,6 +316,18 @@ def read_key_controls(path: str | Path) -> dict[str, int]:
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# Capture sources: V4L2 devices and network streams
+# --------------------------------------------------------------------------
+
+NETWORK_SCHEMES = ("http://", "https://", "rtsp://", "rtmp://", "udp://", "tcp://")
+
+
+def is_network_source(source: str | Path) -> bool:
+    """True for stream URLs (phone camera apps, IP cameras) vs. /dev/video* paths."""
+    return str(source).lower().startswith(NETWORK_SCHEMES)
+
+
 def open_capture(
     path: str | Path,
     width: int,
@@ -323,10 +335,25 @@ def open_capture(
     fps: int | None = None,
     fourcc: str | None = None,
 ) -> cv2.VideoCapture:
-    """Open a V4L2 capture with the requested fourcc/size/fps."""
-    capture = cv2.VideoCapture(str(path), cv2.CAP_V4L2)
+    """Open a V4L2 device or network stream.
+
+    For network sources, OpenCV's FFMPEG backend is used; width/height/fps are
+    hints only (the streaming app decides the actual resolution).
+    """
+    source = str(path)
+    if is_network_source(source):
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if not capture.isOpened():
+            raise RuntimeError(f"could not open stream {source}")
+        if fps:
+            capture.set(cv2.CAP_PROP_FPS, fps)
+        with contextlib.suppress(Exception):
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return capture
+
+    capture = cv2.VideoCapture(source, cv2.CAP_V4L2)
     if not capture.isOpened():
-        raise RuntimeError(f"could not open video device {path}")
+        raise RuntimeError(f"could not open video device {source}")
     if fourcc:
         capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
@@ -336,6 +363,25 @@ def open_capture(
     with contextlib.suppress(Exception):
         capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return capture
+
+
+def fetch_still(url: str, timeout: float = 5.0) -> np.ndarray | None:
+    """Fetch a full-resolution still over HTTP (e.g. IP Webcam's ``/photo.jpg``).
+
+    Returns a BGR image, or None on any failure so callers can fall back to the
+    video-stream frame.
+    """
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            data = response.read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    buffer = np.frombuffer(data, dtype=np.uint8)
+    return cv2.imdecode(buffer, cv2.IMREAD_COLOR)
 
 
 def capture_frames(

@@ -258,6 +258,7 @@ class CaptureConfig:
     height: int
     fps: int
     fourcc: str
+    still_url: str | None = None
     motion: MotionConfig = field(default_factory=MotionConfig)
     analysis_fps: float = 10.0
     max_captures: int | None = None
@@ -315,8 +316,13 @@ class CaptureEngine:
         event = self.detector.update(frame, now)
         record = None
         if event.capture:
+            still = None
+            if self.config.still_url:
+                # Prefer the phone's full-resolution still over the video frame.
+                still = camera.fetch_still(self.config.still_url)
+            image = still if still is not None else frame
             seq = next_page_seq(self.config.album_dir)
-            record = save_capture(self.config.album_dir, frame, seq)
+            record = save_capture(self.config.album_dir, image, seq)
             self.captures += 1
         return event, record
 

@@ -1,6 +1,6 @@
 # Photo Album Scanner
 
-Semi-automated digitization of physical photo albums with a fixed overhead webcam.
+Semi-automated digitization of physical photo albums with an overhead camera.
 A human flips the pages; the app auto-captures each page as it settles, detects the
 individual photos, corrects perspective and glare, applies light post-processing, and
 saves clean per-photo crops — with a local web UI for reviewing and fixing results.
@@ -10,9 +10,9 @@ saves clean per-photo crops — with a local web UI for reviewing and fixing res
 
 ## At a glance
 
-- **Input:** overhead 1080p webcam (4K upgrade path) + a human flipping album pages
+- **Input:** phone or webcam (V4L2 device or MJPEG/RTSP stream URL) + a human flipping pages
 - **Output:** `albums/<album>/page_###/photo_##.jpg` plus per-page metadata
-- **Stack:** Python (OpenCV, FastAPI, SQLite), local-only
+- **Stack:** Python (OpenCV, FastAPI), local-only
 - **Detection:** classical CV first; UI corrections accumulate into training data for a
   small ML detector later
 
@@ -46,6 +46,38 @@ Then process and review:
 pas process            # run photo detection over all captured pages
 pas serve              # web UI at http://127.0.0.1:8000
 ```
+
+### Using your phone as the camera
+
+Phone cameras beat typical webcams. The easiest route needs no kernel modules or sudo:
+run an app that serves an MJPEG/HTTP stream and point `--source` at its URL.
+
+**Android — IP Webcam**
+
+1. Install *IP Webcam*, set the video resolution to maximum, and start the server.
+2. Note the URL it shows (e.g. `http://192.168.1.23:8080`).
+3. Calibrate and capture:
+
+```bash
+pas calibrate --source http://192.168.1.23:8080/video \
+              --still-url http://192.168.1.23:8080/photo.jpg --frames 5
+pas capture --album album_01     # reuses the saved source and still URL
+```
+
+With `--still-url`, every capture fetches a **full-resolution still** (`/photo.jpg`)
+instead of a compressed video frame — noticeably sharper for print copies. Set
+exposure/focus in the phone app; network streams have no V4L2 controls (the scanner
+skips camera locking automatically).
+
+**iOS** — any app that serves MJPEG or RTSP works the same way:
+`--source http://PHONE_IP:PORT/video` or `--source rtsp://...`.
+
+**Android 14+ without an app** — Developer options → *USB webcam* exposes the phone as a
+standard UVC device (`/dev/videoN`); then everything works exactly like a webcam,
+including `pas inspect`/control locking.
+
+DroidCam/Iriun (via `v4l2loopback`) also work since they appear as `/dev/videoN`, but
+need `sudo` and a kernel module; the stream-URL route avoids that.
 
 ### Web review UI
 

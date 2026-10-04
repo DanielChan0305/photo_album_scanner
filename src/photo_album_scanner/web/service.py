@@ -119,13 +119,14 @@ class CaptureService:
                 height=settings.camera.height,
                 fps=settings.camera.fps,
                 fourcc=settings.camera.pixel_format or "MJPG",
+                still_url=settings.camera.still_url,
             )
             engine = capture.CaptureEngine(config)
             with self._lock:
                 self._engine = engine
                 self._started_at = time.monotonic()
 
-            if settings.camera.controls:
+            if settings.camera.controls and not camera.is_network_source(config.device):
                 camera.apply_controls(config.device, settings.camera.controls)
             engine.open()
 
