@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Project runtime data (raw captures, crops, database)
+data/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
