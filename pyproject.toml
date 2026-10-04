@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-album-scanner"
+version = "0.1.0"
+description = "Semi-automated digitization of physical photo albums with an overhead webcam"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "linuxpy>=0.25",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+pas = "photo_album_scanner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

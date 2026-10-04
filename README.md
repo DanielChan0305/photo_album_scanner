@@ -5,7 +5,8 @@ A human flips the pages; the app auto-captures each page as it settles, detects 
 individual photos, corrects perspective and glare, applies light post-processing, and
 saves clean per-photo crops — with a local web UI for reviewing and fixing results.
 
-**Status:** planning — see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full design.
+**Status:** M0 in progress — camera inspection and calibration tooling implemented
+(see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full design).
 
 ## At a glance
 
@@ -17,7 +18,21 @@ saves clean per-photo crops — with a local web UI for reviewing and fixing res
 
 ## Quick start
 
-Coming with milestone M0 (environment setup + camera calibration). See the plan.
+Requires Linux with V4L2 and [uv](https://docs.astral.sh/uv/) (or any Python 3.11+).
+
+```bash
+uv venv --python 3.13
+uv pip install -e '.[dev]'
+
+source .venv/bin/activate
+
+pas devices          # list /dev/video* devices
+pas inspect          # formats, frame rates, and controls of the selected camera
+pas calibrate        # lock auto exposure/focus/WB + save test frames to data/calibration/
+```
+
+`pas calibrate` writes the chosen device, capture format, and locked control values to
+`data/settings.json`, which later milestones read at startup.
 
 ## Repository layout
 
